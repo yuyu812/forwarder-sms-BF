@@ -53,13 +53,19 @@ export async function sendWeixinNotification(env, title, content, device, code =
             body: JSON.stringify(payload),
         });
 
-        if (response.ok) {
+        const result = await safeJson(response);
+
+        // ilinkai 即使失败也可能返回 HTTP 200，需要检查 ret 字段
+        // ret 为 0 或不存在（空 {}）且 HTTP 200 视为成功
+        // ret 为负数（如 -2）表示 token 过期等错误
+        if (response.ok && (result.ret === undefined || result.ret === 0)) {
             console.log('WeChat ilinkai push success');
             return { success: true };
         }
 
-        const result = await safeJson(response);
-        const errorMsg = result.errmsg || result.msg || `HTTP ${response.status}`;
+        const errorMsg = result.ret !== undefined
+            ? `ilinkai error ret=${result.ret}`
+            : (result.errmsg || result.msg || `HTTP ${response.status}`);
         console.error(`WeChat ilinkai push failed: ${errorMsg}`);
         return { success: false, error: errorMsg };
     } catch (error) {
@@ -94,6 +100,40 @@ function buildWeixinText(title, content, device, code) {
     lines.push(`时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
 
     return lines.join('\n');
+}
+
+/**
+ * ilinkai Token 保活 —— 定时调用 getupdates 防止 token 过期
+ * @param {Object} env - Worker 环境变量
+ */
+export async function keepAliveWeixin(env) {
+    const botToken = env.WEIXIN_BOT_TOKEN;
+    if (!botToken) return;
+
+    try {
+        const uin = btoa(String(Math.floor(Math.random() * 4294967296)));
+        const baseUrl = env.WEIXIN_BASE_URL || 'https://ilinkai.weixin.qq.com';
+
+        const response = await fetch(`${baseUrl}/ilink/bot/getupdates`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'AuthorizationType': 'ilink_bot_token',
+                'X-WECHAT-UIN': uin,
+                'Authorization': `Bearer ${botToken}`,
+            },
+            body: JSON.stringify({
+                get_updates_buf: '',
+                base_info: { channel_version: '1.0.2' },
+            }),
+            signal: AbortSignal.timeout(10000),
+        });
+
+        const result = await safeJson(response);
+        console.log(`WeChat keepalive: HTTP ${response.status}, ret=${result.ret ?? 'ok'}`);
+    } catch (error) {
+        console.error(`WeChat keepalive error: ${error.message}`);
+    }
 }
 
 async function safeJson(response) {
