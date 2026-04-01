@@ -4,8 +4,13 @@
  */
 
 import { handleSmsForward } from './handlers/sms.js';
+import { keepAliveWeixin } from './utils/weixin.js';
 
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(keepAliveWeixin(env));
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
