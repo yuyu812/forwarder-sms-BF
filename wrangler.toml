@@ -20,4 +20,6 @@ DEBUG = "false"
 # npx wrangler secret put API_TOKEN
 # npx wrangler secret put BARK_KEYS
 # npx wrangler secret put FEISHU_WEBHOOK
+# npx wrangler secret put WEIXIN_BOT_TOKEN
+# npx wrangler secret put WEIXIN_TARGET_USER
 
