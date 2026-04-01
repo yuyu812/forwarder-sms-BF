@@ -10,6 +10,10 @@ compatibility_date = "2024-01-01"
 binding = "SMS_CACHE"
 id = "505ec80464e04ef08dcf7d40bd8deb74"
 
+# Cron Trigger: 每1分钟调用 getupdates 保持微信 ilinkai token 活跃
+[triggers]
+crons = ["* * * * *"]
+
 # 环境变量（非敏感信息）
 [vars]
 BARK_SERVER = "https://api.day.app"
