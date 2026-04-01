@@ -7,6 +7,7 @@ import { sendBarkNotification, buildNotificationContent } from '../utils/bark.js
 import { sendFeishuNotification } from '../utils/feishu.js';
 import { sendWecomNotification } from '../utils/wecom.js';
 import { sendDingtalkNotification } from '../utils/dingtalk.js';
+import { sendWeixinNotification } from '../utils/weixin.js';
 import { checkRateLimit } from '../utils/rateLimit.js';
 
 /**
@@ -119,15 +120,16 @@ export async function handleSmsForward(request, env, url) {
         ? sendBarkNotification(env, barkContent.title, barkContent.body, targetKeys)
         : Promise.resolve({ success: false, pushed: 0 });
 
-    const [feishuResult, wecomResult, dingtalkResult, barkResult] = await Promise.all([
+    const [feishuResult, wecomResult, dingtalkResult, barkResult, weixinResult] = await Promise.all([
         sendFeishuNotification(env, title, content, deviceId, code),
         sendWecomNotification(env, title, content, deviceId, code),
         sendDingtalkNotification(env, title, content, deviceId, code),
         barkPromise,
+        sendWeixinNotification(env, title, content, deviceId, code),
     ]);
 
     // 判断推送结果
-    if (!feishuResult.success && !wecomResult.success && !dingtalkResult.success && !barkResult.success) {
+    if (!feishuResult.success && !wecomResult.success && !dingtalkResult.success && !barkResult.success && !weixinResult.success) {
         console.error('All push channels failed');
         return jsonResponse({
             success: false,
@@ -137,11 +139,12 @@ export async function handleSmsForward(request, env, url) {
                 wecom: wecomResult.error,
                 dingtalk: dingtalkResult.error,
                 bark: barkResult.errors,
+                weixin: weixinResult.error,
             },
         }, 502);
     }
 
-    console.log(`SMS forwarded successfully: code=${code}, feishu=${feishuResult.success}, wecom=${wecomResult.success}, dingtalk=${dingtalkResult.success}, bark=${barkResult.pushed}`);
+    console.log(`SMS forwarded successfully: code=${code}, feishu=${feishuResult.success}, wecom=${wecomResult.success}, dingtalk=${dingtalkResult.success}, bark=${barkResult.pushed}, weixin=${weixinResult.success}`);
 
     return jsonResponse({
         success: true,
@@ -151,6 +154,7 @@ export async function handleSmsForward(request, env, url) {
         wecom: wecomResult.success,
         dingtalk: dingtalkResult.success,
         bark: barkResult.pushed,
+        weixin: weixinResult.success,
     });
 }
 
