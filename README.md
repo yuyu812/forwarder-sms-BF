@@ -1,6 +1,6 @@
 # SMS Forwarder - 短信转发统一接口
 
-🚀 基于 Cloudflare Worker 的**通用短信转发网关**，提供统一 REST API 接口，将短信/验证码转发到 Bark / 飞书 / 企业微信 / 钉钉等多种推送渠道。
+🚀 基于 Cloudflare Worker 的**通用短信转发网关**，提供统一 REST API 接口，将短信/验证码转发到 Bark / 飞书 / 企业微信 / 钉钉 / **微信个人号** 等多种推送渠道。
 
 **支持接入任何能发送 HTTP 请求的设备**，包括但不限于：
 - 📱 **iOS** - 通过快捷指令自动化
@@ -18,10 +18,34 @@
 - ✅ 多设备推送支持
 - ✅ 速率限制（优先设备标识，缺省回退 IP）
 - ✅ 调试模式
+- ✅ Bark 推送（支持多设备并行推送）
 - ✅ 飞书自定义机器人 Webhook 推送
 - ✅ 企业微信群机器人 Webhook 推送（Markdown 富文本）
 - ✅ 钉钉自定义机器人 Webhook 推送（ActionCard 卡片）
+- ✅ **微信个人号推送（通过 ilinkai Bot 接口）**
 - ✅ 支持所有短信推送（不限验证码）
+
+---
+
+## 架构概览
+
+```
+手机收到短信
+    ↓ HTTP POST
+Cloudflare Worker（鉴权 → 去重 → 限流）
+    ↓ 并行推送
+┌────────┬────────┬────────┬────────┬────────┐
+│  Bark  │  飞书  │ 企业微信│  钉钉  │ 微信   │
+│  Push  │Webhook │Webhook │Webhook │ilinkai │
+└────────┴────────┴────────┴────────┴────────┘
+
+            ┌──────────────────┐
+            │ 常驻服务器(可选)   │
+            │ 微信 Token 保活   │
+            └──────────────────┘
+```
+
+所有推送渠道并行发送，互不影响。任意渠道未配置时会静默跳过，只要有一个渠道成功即返回 `success: true`。
 
 ---
 
@@ -52,27 +76,27 @@ id = "你的 KV namespace id"
 ```bash
 # API 访问令牌
 npx wrangler secret put API_TOKEN
-# 输入你的 token，例如: my-secret-token-12345
 
 # Bark 设备 Key（多个用逗号分隔，可选）
 npx wrangler secret put BARK_KEYS
-# 输入你的 Bark keys，例如: key1,key2,key3
 
-# 飞书自定义机器人 Webhook URL
+# 飞书自定义机器人 Webhook URL（可选）
 npx wrangler secret put FEISHU_WEBHOOK
-# 输入你的飞书 Webhook URL，例如: https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx
 
-# 企业微信群机器人 Webhook URL
+# 企业微信群机器人 Webhook URL（可选）
 npx wrangler secret put WECOM_WEBHOOK
-# 输入你的企业微信 Webhook URL，例如: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxx
 
-# 钉钉自定义机器人 Webhook URL
+# 钉钉自定义机器人 Webhook URL（可选）
 npx wrangler secret put DINGTALK_WEBHOOK
-# 输入你的钉钉 Webhook URL，例如: https://oapi.dingtalk.com/robot/send?access_token=xxxxx
 
 # 钉钉机器人加签密钥（可选）
 npx wrangler secret put DINGTALK_SECRET
-# 输入你的钉钉加签密钥（没有则可跳过）
+
+# 微信 ilinkai Bot Token（可选，详见下方微信配置章节）
+npx wrangler secret put WEIXIN_BOT_TOKEN
+
+# 微信目标用户 ID（可选）
+npx wrangler secret put WEIXIN_TARGET_USER
 ```
 
 ### 4. 部署
@@ -106,7 +130,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| content | string | ✅ | 短信内容 |
+| content | string | ✅ | 短信内容（最大 1000 字符） |
 | device | string | ❌ | 来源设备标识（用于去重与限流） |
 | code | string | ❌ | 验证码（不传则自动提取） |
 | timestamp | number | ❌ | Unix 时间戳（偏差>5分钟拒绝） |
@@ -121,7 +145,8 @@ Content-Type: application/json
   "feishu": true,
   "wecom": false,
   "dingtalk": false,
-  "bark": 2
+  "bark": 2,
+  "weixin": true
 }
 ```
 
@@ -209,6 +234,134 @@ print(response.json())
 
 ---
 
+## 推送渠道配置
+
+### Bark
+
+```bash
+npx wrangler secret put BARK_KEYS
+# 输入 Bark 设备 Key，多个用逗号分隔
+```
+
+`BARK_SERVER` 默认为 `https://api.day.app`，如使用自建服务器可在 `wrangler.toml` 中修改。
+
+### 飞书自定义机器人
+
+1. 在飞书群聊中添加自定义机器人
+2. 复制 Webhook 地址
+
+```bash
+npx wrangler secret put FEISHU_WEBHOOK
+```
+
+消息以交互卡片格式推送，包含验证码高亮、短信内容、来源设备、接收时间。
+
+### 企业微信群机器人
+
+1. 在企业微信群聊中添加群机器人
+2. 复制 Webhook 地址
+
+```bash
+npx wrangler secret put WECOM_WEBHOOK
+```
+
+消息以 Markdown 富文本格式推送，验证码以警告色高亮显示。
+
+### 钉钉自定义机器人
+
+1. 在钉钉群聊中添加自定义机器人
+2. 复制 Webhook 地址和加签密钥（如有）
+
+```bash
+npx wrangler secret put DINGTALK_WEBHOOK
+npx wrangler secret put DINGTALK_SECRET  # 可选
+```
+
+消息以 ActionCard 卡片格式推送，支持 HMAC-SHA256 签名验证。
+
+### 微信个人号（ilinkai Bot）
+
+微信渠道通过 ilinkai Bot 接口实现单向推送到个人微信。与其他渠道不同，微信渠道需要额外的保活机制。
+
+#### 第一步：获取 Token 和 User ID
+
+```bash
+node scripts/weixin-setup.mjs
+```
+
+脚本会输出一个 URL，在浏览器中打开后用微信扫码登录。登录后用目标微信号给 Bot 发一条消息，脚本自动获取 `WEIXIN_BOT_TOKEN` 和 `WEIXIN_TARGET_USER`。
+
+#### 第二步：配置 Worker
+
+```bash
+npx wrangler secret put WEIXIN_BOT_TOKEN
+npx wrangler secret put WEIXIN_TARGET_USER
+```
+
+#### 第三步：部署保活脚本
+
+ilinkai 的 token 需要通过持续长轮询保持 session 在线，否则会很快失效。需要在一台常驻服务器上部署保活脚本。
+
+**上传脚本：**
+
+```bash
+mkdir -p /opt/weixin-keepalive
+scp scripts/weixin-keepalive.mjs user@server:/opt/weixin-keepalive/
+```
+
+**创建 systemd 服务：**
+
+```ini
+# /etc/systemd/system/weixin-keepalive.service
+[Unit]
+Description=WeChat ilinkai Bot Keepalive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=WEIXIN_BOT_TOKEN=<your_bot_token>
+Environment=WEIXIN_STATE_FILE=/opt/weixin-keepalive/state.json
+ExecStart=/usr/bin/node /opt/weixin-keepalive/weixin-keepalive.mjs
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**启动服务：**
+
+```bash
+systemctl daemon-reload
+systemctl enable weixin-keepalive
+systemctl start weixin-keepalive
+```
+
+**查看状态：**
+
+```bash
+systemctl status weixin-keepalive
+journalctl -u weixin-keepalive -f
+```
+
+#### 保活脚本说明
+
+- 脚本通过持续调用 `getupdates` 长轮询接口（服务端 hold 35 秒）保持 session 在线
+- 支持游标持久化（重启不丢失状态）
+- 内存占用 ~25MB，CPU 几乎为零，适合树莓派 / Armbian 等低功耗设备
+- 服务器重启后 systemd 自动拉起，token 不会因重启而变更
+
+#### 需要重新扫码的情况
+
+- 保活脚本长时间未运行（服务器宕机数小时）
+- 微信服务端主动踢下线
+- 日志中持续出现 `errcode=-14`（session 过期）
+
+重新扫码后需同时更新服务器 systemd 环境变量和 Cloudflare Worker Secret。
+
+---
+
 ## 调试模式
 
 添加 `?debug=true` 参数，只写入 KV 缓存，不发送任何推送:
@@ -239,84 +392,49 @@ curl -X POST http://localhost:8787/api/sms/forward \
 
 ## 环境变量
 
-| 变量 | 类型 | 说明 |
-|------|------|------|
-| API_TOKEN | Secret | API 访问令牌 |
-| BARK_KEYS | Secret | Bark 设备 Keys（逗号分隔） |
-| BARK_SERVER | Var | Bark 服务器地址（默认: https://api.day.app） |
-| RATE_LIMIT | Var | 每分钟最大请求数（默认: 10） |
-| DEBUG | Var | 调试模式（默认: false） |
-| FEISHU_WEBHOOK | Secret | 飞书自定义机器人 Webhook URL |
-| WECOM_WEBHOOK | Secret | 企业微信群机器人 Webhook URL |
-| DINGTALK_WEBHOOK | Secret | 钉钉自定义机器人 Webhook URL |
-| DINGTALK_SECRET | Secret | 钉钉机器人加签密钥（可选） |
+| 变量 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| API_TOKEN | Secret | ✅ | API 访问令牌 |
+| BARK_KEYS | Secret | ❌ | Bark 设备 Keys（逗号分隔） |
+| BARK_SERVER | Var | ❌ | Bark 服务器地址（默认: `https://api.day.app`） |
+| FEISHU_WEBHOOK | Secret | ❌ | 飞书自定义机器人 Webhook URL |
+| WECOM_WEBHOOK | Secret | ❌ | 企业微信群机器人 Webhook URL |
+| DINGTALK_WEBHOOK | Secret | ❌ | 钉钉自定义机器人 Webhook URL |
+| DINGTALK_SECRET | Secret | ❌ | 钉钉机器人加签密钥 |
+| WEIXIN_BOT_TOKEN | Secret | ❌ | 微信 ilinkai Bot Token |
+| WEIXIN_TARGET_USER | Secret | ❌ | 微信目标用户 ID（`xxx@im.wechat`） |
+| WEIXIN_BASE_URL | Var | ❌ | ilinkai 接口地址（默认: `https://ilinkai.weixin.qq.com`） |
+| RATE_LIMIT | Var | ❌ | 每分钟最大请求数（默认: 10） |
+| DEBUG | Var | ❌ | 调试模式（默认: false） |
 
 ## 去重与限流说明
 
-- 去重基于 `device + content` 计算哈希；未提供 device 时仅使用 content。
-- 速率限制优先使用 device；未提供 device 时回退到客户端 IP。
+- 去重基于 `device + content` 计算 SHA-256 哈希，TTL 300 秒。未提供 device 时仅使用 content。
+- 速率限制优先使用 device；未提供 device 时回退到客户端 IP。默认 10 次/分钟。
 
 ---
 
-## 飞书自定义机器人配置
+## 项目结构
 
-1. 在飞书群聊中添加自定义机器人
-2. 复制 Webhook 地址（格式: `https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx`）
-3. 运行以下命令配置:
-
-```bash
-npx wrangler secret put FEISHU_WEBHOOK
-# 粘贴你的 Webhook URL
 ```
-
-简单短信会以卡片消息格式推送，包含:
-- 验证码高亮显示（如果有）
-- 短信完整内容
-- 来源设备信息
-- 接收时间
-
----
-
-## 企业微信群机器人配置（Markdown 格式）
-
-1. 在企业微信群聊中添加群机器人
-2. 复制 Webhook 地址（格式: `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxx`）
-3. 运行以下命令配置:
-
-```bash
-npx wrangler secret put WECOM_WEBHOOK
-# 粘贴你的企业微信 Webhook URL
+├── src/
+│   ├── index.js              # Worker 入口，路由分发 + 微信保活 Cron
+│   ├── handlers/
+│   │   └── sms.js            # SMS 转发处理器（鉴权/验证/去重/并行推送）
+│   └── utils/
+│       ├── bark.js            # Bark 推送
+│       ├── feishu.js          # 飞书 Webhook 推送
+│       ├── wecom.js           # 企业微信 Webhook 推送
+│       ├── dingtalk.js        # 钉钉 Webhook 推送
+│       ├── weixin.js          # 微信 ilinkai 推送 + 保活
+│       ├── validator.js       # Token 验证 + 验证码提取
+│       └── rateLimit.js       # KV 速率限制
+├── scripts/
+│   ├── weixin-setup.mjs       # 微信扫码配置工具（获取 token + user ID）
+│   └── weixin-keepalive.mjs   # 微信 Token 保活脚本（部署到常驻服务器）
+├── wrangler.toml              # Cloudflare Worker 配置
+└── package.json
 ```
-
-消息以 Markdown 富文本格式推送，包含:
-- 验证码高亮显示（警告色）
-- 短信内容引用块
-- 来源设备信息
-- 接收时间
-
----
-
-## 钉钉自定义机器人配置（ActionCard 卡片）
-
-1. 在钉钉群聊中添加自定义机器人
-2. 复制 Webhook 地址（格式: `https://oapi.dingtalk.com/robot/send?access_token=xxxxx`）
-3. 如需“加签”安全设置，请同时保存加签密钥
-4. 运行以下命令配置:
-
-```bash
-npx wrangler secret put DINGTALK_WEBHOOK
-# 粘贴你的钉钉 Webhook URL
-
-# 如需加签
-npx wrangler secret put DINGTALK_SECRET
-```
-
-消息以 ActionCard 卡片格式推送，包含:
-- 验证码代码块高亮
-- 短信内容引用块
-- 来源设备信息
-- 接收时间
-- 可点击卡片按钮
 
 ---
 
