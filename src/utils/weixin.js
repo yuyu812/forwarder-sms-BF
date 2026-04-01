@@ -25,10 +25,13 @@ export async function sendWeixinNotification(env, title, content, device, code =
         const text = buildWeixinText(title, content, device, code);
 
         const uin = btoa(String(Math.floor(Math.random() * 4294967296)));
+        const clientId = `sms-forwarder-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
         const payload = {
             msg: {
+                from_user_id: '',
                 to_user_id: targetUser,
+                client_id: clientId,
                 message_type: 2,
                 message_state: 2,
                 item_list: [
@@ -38,6 +41,7 @@ export async function sendWeixinNotification(env, title, content, device, code =
                     },
                 ],
             },
+            base_info: { channel_version: '2.1.1' },
         };
 
         const baseUrl = env.WEIXIN_BASE_URL || 'https://ilinkai.weixin.qq.com';
@@ -49,6 +53,8 @@ export async function sendWeixinNotification(env, title, content, device, code =
                 'AuthorizationType': 'ilink_bot_token',
                 'X-WECHAT-UIN': uin,
                 'Authorization': `Bearer ${botToken}`,
+                'iLink-App-Id': 'bot',
+                'iLink-App-ClientVersion': '131329',
             },
             body: JSON.stringify(payload),
         });
